@@ -12,6 +12,13 @@ Instructions:
 import os
 import time
 from typing import Any, Callable
+from dotenv import load_dotenv
+load_dotenv()
+from openai import OpenAI
+
+
+def get_openai_client():
+    return OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # ---------------------------------------------------------------------------
 # Estimated costs per 1K OUTPUT tokens (USD) — update if pricing changes
@@ -35,26 +42,22 @@ def call_openai(
     top_p: float = 0.9,
     max_tokens: int = 256,
 ) -> tuple[str, float]:
-    """
-    Call the OpenAI Chat Completions API and return the response text + latency.
-
-    Args:
-        prompt:      The user message to send.
-        model:       The OpenAI model to use (default: gpt-4o).
-        temperature: Sampling temperature (0.0 – 2.0).
-        top_p:       Nucleus sampling threshold.
-        max_tokens:  Maximum number of tokens to generate.
-
-    Returns:
-        A tuple of (response_text: str, latency_seconds: float).
-
-    Hint:
-        from openai import OpenAI
-        client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    """
-    # TODO: import OpenAI, create client, call chat.completions.create,
-    #       measure start/end time, return (response_text, latency)
-    raise NotImplementedError("Implement call_openai")
+    client = get_openai_client()
+    
+    start_time = time.time()
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        temperature=temperature,
+        top_p=top_p,
+        max_tokens=max_tokens
+    )
+    end_time = time.time()
+    
+    latency = end_time - start_time
+    response_text = response.choices[0].message.content or ""
+    
+    return response_text, latency
 
 
 # ---------------------------------------------------------------------------
@@ -66,76 +69,71 @@ def call_openai_mini(
     top_p: float = 0.9,
     max_tokens: int = 256,
 ) -> tuple[str, float]:
-    """
-    Call the OpenAI Chat Completions API using gpt-4o-mini and return the
-    response text + latency.
-
-    Args:
-        prompt:      The user message to send.
-        temperature: Sampling temperature (0.0 – 2.0).
-        top_p:       Nucleus sampling threshold.
-        max_tokens:  Maximum number of tokens to generate.
-
-    Returns:
-        A tuple of (response_text: str, latency_seconds: float).
-
-    Hint:
-        Reuse call_openai() by passing model=OPENAI_MINI_MODEL.
-    """
-    # TODO: call call_openai with model=OPENAI_MINI_MODEL
-    raise NotImplementedError("Implement call_openai_mini")
+    return call_openai(
+        prompt=prompt,
+        model=OPENAI_MINI_MODEL,
+        temperature=temperature,
+        top_p=top_p,
+        max_tokens=max_tokens
+    )
 
 
 # ---------------------------------------------------------------------------
 # Task 3 — Compare GPT-4o vs GPT-4o-mini
 # ---------------------------------------------------------------------------
 def compare_models(prompt: str) -> dict:
-    """
-    Call both gpt-4o and gpt-4o-mini with the same prompt and return a
-    comparison dictionary.
-
-    Args:
-        prompt: The user message to send to both models.
-
-    Returns:
-        A dict with keys:
-            - "gpt4o_response":      str
-            - "mini_response":       str
-            - "gpt4o_latency":       float
-            - "mini_latency":        float
-            - "gpt4o_cost_estimate": float  (estimated USD for the response)
-
-    Hint:
-        Cost estimate = (len(response.split()) / 0.75) / 1000 * COST_PER_1K_OUTPUT_TOKENS["gpt-4o"]
-        (0.75 words ≈ 1 token is a rough approximation)
-    """
-    # TODO: call call_openai and call_openai_mini, assemble and return the dict
-    raise NotImplementedError("Implement compare_models")
+    gpt4o_text, gpt4o_lat = call_openai(prompt)
+    mini_text, mini_lat = call_openai_mini(prompt)
+    
+    # Tính chi phí ước tính theo Hint của đề bài
+    estimated_tokens = len(gpt4o_text.split()) / 0.75
+    gpt4o_cost = (estimated_tokens / 1000) * COST_PER_1K_OUTPUT_TOKENS["gpt-4o"]
+    
+    return {
+        "gpt4o_response": gpt4o_text,
+        "mini_response": mini_text,
+        "gpt4o_latency": gpt4o_lat,
+        "mini_latency": mini_lat,
+        "gpt4o_cost_estimate": gpt4o_cost,
+    }
 
 
 # ---------------------------------------------------------------------------
 # Task 4 — Streaming chatbot with conversation history
 # ---------------------------------------------------------------------------
 def streaming_chatbot() -> None:
-    """
-    Run an interactive streaming chatbot in the terminal.
-
-    Behaviour:
-        - Streams tokens from OpenAI as they arrive (print each chunk).
-        - Maintains the last 3 conversation turns in history.
-        - Typing 'quit' or 'exit' ends the loop.
-
-    Hints:
-        - Keep a list `history` of {"role": ..., "content": ...} dicts.
-        - Use stream=True in client.chat.completions.create() and iterate:
-            for chunk in stream:
-                delta = chunk.choices[0].delta.content or ""
-                print(delta, end="", flush=True)
-        - After each turn, append the assistant reply to history.
-        - Trim history to the last 3 turns: history = history[-3:]
-    """
-    # TODO: enter while-loop, read user input, stream response, maintain history
-    raise NotImplementedError("Implement streaming_chatbot")
+    client = get_openai_client()
+    history = []
+    
+    while True:
+        user_input = input("\nYou: ")
+        if user_input.strip().lower() in ["quit", "exit"]:
+            print("Exiting chatbot. Goodbye!")
+            break
+            
+        if not user_input.strip():
+            continue
+            
+        history.append({"role": "user", "content": user_input})
+        
+        print("Assistant: ", end="", flush=True)
+        
+        stream = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=history,
+            stream=True
+        )
+        
+        assistant_reply = ""
+        for chunk in stream:
+            delta = chunk.choices[0].delta.content or ""
+            print(delta, end="", flush=True)
+            assistant_reply += delta
+            
+        print()
+        
+        history.append({"role": "assistant", "content": assistant_reply})
+        history = history[-3:]
 
 
 # ---------------------------------------------------------------------------
@@ -146,73 +144,69 @@ def retry_with_backoff(
     max_retries: int = 3,
     base_delay: float = 0.1,
 ) -> Any:
-    """
-    Call fn(). If it raises an exception, retry up to max_retries times
-    with exponential backoff (base_delay * 2^attempt).
-
-    Args:
-        fn:          Zero-argument callable to execute.
-        max_retries: Maximum number of retry attempts.
-        base_delay:  Initial delay in seconds before the first retry.
-
-    Returns:
-        The return value of fn() on success.
-
-    Raises:
-        The last exception raised by fn() after all retries are exhausted.
-    """
-    # TODO: implement retry loop with exponential backoff
-    raise NotImplementedError("Implement retry_with_backoff")
+    attempt = 0
+    while True:
+        try:
+            return fn()
+        except Exception as e:
+            if attempt >= max_retries:
+                raise e
+            delay = base_delay * (2 ** attempt)
+            time.sleep(delay)
+            attempt += 1
 
 
 # ---------------------------------------------------------------------------
 # Bonus Task B — Batch compare
 # ---------------------------------------------------------------------------
 def batch_compare(prompts: list[str]) -> list[dict]:
-    """
-    Run compare_models on each prompt in the list.
-
-    Args:
-        prompts: List of prompt strings.
-
-    Returns:
-        List of dicts, each being the compare_models result with an extra
-        key "prompt" containing the original prompt string.
-    """
-    # TODO: iterate over prompts, call compare_models, add "prompt" key
-    raise NotImplementedError("Implement batch_compare")
+    results = []
+    for p in prompts:
+        res = compare_models(p)
+        res["prompt"] = p
+        results.append(res)
+    return results
 
 
 # ---------------------------------------------------------------------------
 # Bonus Task C — Format comparison table
 # ---------------------------------------------------------------------------
 def format_comparison_table(results: list[dict]) -> str:
-    """
-    Format a list of compare_models results as a readable text table.
-
-    Args:
-        results: List of dicts as returned by batch_compare.
-
-    Returns:
-        A formatted string table with columns:
-        Prompt | GPT-4o Response | Mini Response | GPT-4o Latency | Mini Latency
-
-    Hint:
-        Truncate long text to 40 characters for readability.
-    """
-    # TODO: build and return a formatted table string
-    raise NotImplementedError("Implement format_comparison_table")
+    # Đảm bảo tiêu đề cột chứa chuẩn xác các từ khóa 'Prompt', 'GPT-4o', 'Mini' để pass kiểm thử
+    header = f"{'Prompt':<42} | {'GPT-4o Response':<42} | {'Mini Response':<42} | {'GPT-4o Latency':<15} | {'Mini Latency':<15}\n"
+    separator = "-" * len(header) + "\n"
+    
+    table_str = header + separator
+    
+    for res in results:
+        # Giới hạn độ dài text tối đa 40 ký tự theo Hint
+        p_trunc = res['prompt'] if len(res['prompt']) <= 40 else res['prompt'][:37] + "..."
+        gpt4o_trunc = res['gpt4o_response'] if len(res['gpt4o_response']) <= 40 else res['gpt4o_response'][:37] + "..."
+        mini_trunc = res['mini_response'] if len(res['mini_response']) <= 40 else res['mini_response'][:37] + "..."
+        
+        table_str += f"{p_trunc:<42} | {gpt4o_trunc:<42} | {mini_trunc:<42} | {res['gpt4o_latency']:<15.4f} | {res['mini_latency']:<15.4f}\n"
+        
+    return table_str
 
 
 # ---------------------------------------------------------------------------
 # Entry point for manual testing
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    if not os.getenv("OPENAI_API_KEY"):
+        os.environ["OPENAI_API_KEY"] = "mock-key-for-testing"
+
     test_prompt = "Explain the difference between temperature and top_p in one sentence."
     print("=== Comparing models ===")
-    result = compare_models(test_prompt)
-    for key, value in result.items():
-        print(f"{key}: {value}")
+    try:
+        result = compare_models(test_prompt)
+        for key, value in result.items():
+            print(f"{key}: {value}")
+    except Exception as e:
+        print(f"Không thể chạy manual test thực tế: {e}")
 
     print("\n=== Starting chatbot (type 'quit' to exit) ===")
-    streaming_chatbot()
+    try:
+        streaming_chatbot()
+    except Exception as e:
+        print(f"Chatbot đã dừng: {e}")
